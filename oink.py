@@ -9,17 +9,24 @@ between Python and Javascript.
 import ast
 import optparse
 import os
+import sys
 from textwrap import dedent
 from contextlib import contextmanager
 
 
-def strmap(show):
-    """Hardcode a particular ast Node to string representation 'show'."""
-    return lambda self, node=None: show
-
-
 class Error(Exception):
     """Base Oink exception...boink!"""
+
+    def __init__(self, node, message):
+        self.node = node
+        self.msg = message
+
+    def __str__(self):
+        return '%s:%s: %s' % (self.node.lineno, self.node.col_offset, self.msg)
+
+
+class CompileError(Error):
+    """A generic compilation error."""
 
 
 class NotImplemented(Error):
@@ -46,7 +53,7 @@ class Compiler(ast.NodeVisitor):
     SUPPORTED_META_FUNCTIONS = ('__init__', '__iter__')
     BUILTINS = {'None': 'null', 'True': 'true', 'False': 'false',
                 'xrange': 'Oink.range', 'range': 'Oink.range',
-                'sum': 'Oink.sum'}
+                'sum': 'Oink.sum', 'str': 'Oink.str', 'repr': 'Oink.repr'}
 
     def __init__(self, *args, **kwargs):
         super(Compiler, self).__init__(*args, **kwargs)
@@ -58,7 +65,7 @@ class Compiler(ast.NodeVisitor):
         return self.visit(tree)
 
     def generic_visit(self, node):
-        raise NotImplemented(ast.dump(node))
+        raise NotImplemented(node, ast.dump(node))
 
     def visit_Module(self, node):
         with self.scoped(node):
@@ -91,7 +98,8 @@ class Compiler(ast.NodeVisitor):
                            orelse=self.body(node, attr='orelse'))
 
     def visit_Compare(self, node):
-        assert len(node.ops) == 1
+        if len(node.ops) != 1:
+            raise NotImplemented(node, 'multi-expression comparison not supported')
         op_type = type(node.ops[0])
         lhs = self.visit(node.left)
         rhs = self.visit(node.comparators[0])
@@ -102,18 +110,23 @@ class Compiler(ast.NodeVisitor):
         return '%s %s %s' % (lhs, self.visit(node.ops[0]), rhs)
 
     def visit_Yield(self, node):
-        raise NotImplemented('yield is not supported')
+        raise NotImplemented(node, 'yield is not supported')
+
+    def visit_Import(self, node):
+        raise NotImplemented(node, 'use "from oink import x"')
 
     def visit_ImportFrom(self, node):
-        assert node.module == 'oink', 'can only import oink runtime'
+        if node.module != 'oink':
+            raise CompileError(node, 'can only import oink runtime')
         return None
 
     def visit_FunctionDef(self, node):
         if node.name == 'new':
             return ''
-        assert node.name in self.SUPPORTED_META_FUNCTIONS or \
-                not node.name.startswith('__'), \
-            'meta function %r is not supported' % node.name
+        if node.name not in self.SUPPORTED_META_FUNCTIONS and \
+                node.name.startswith('__'):
+            raise NotImplemented(node, 'meta function %r is not supported'
+                                 % node.name)
         if self.scope == ast.ClassDef:
             prelude = 'var self = this'
             function_format = """
@@ -146,8 +159,8 @@ class Compiler(ast.NodeVisitor):
                                args=args, comment=comment)
 
     def visit_arguments(self, node):
-        assert not node.kwarg, 'keyword arguments not supported'
-        assert not node.defaults
+        if node.kwarg:
+            raise NotImplemented(node, 'keyword arguments not supported')
         args = self.visit_list(node.args)
         if args and args[0] == 'self' and self.parent_scope == ast.ClassDef:
             args.pop(0)
@@ -155,7 +168,8 @@ class Compiler(ast.NodeVisitor):
 
     def visit_For(self, node):
         if isinstance(node.target, ast.Tuple):
-            raise NotImplemented('loop iteration unpacking is not supported')
+            raise NotImplemented(
+                    node, 'loop iteration unpacking is not supported')
         iter = self.visit(node.iter)
         target = self.visit(node.target)
         body = self.body(node)
@@ -177,7 +191,9 @@ class Compiler(ast.NodeVisitor):
 
     def visit_Assign(self, node):
         out = []
-        assert len(node.targets) == 1, node.targets
+        if len(node.targets) != 1:
+            raise NotImplemented(
+                    node, 'only single-level assignment is supported')
         # Assume unpacking assignment. Is this a valid assumption?
         if isinstance(node.targets[0], ast.Tuple):
             for i, target in enumerate(node.targets[0].elts):
@@ -186,8 +202,8 @@ class Compiler(ast.NodeVisitor):
         else:
             lhs = self.visit(node.targets[0])
             # XXX This...is hackish.
-            assert not lhs.startswith('Oink.'), \
-                    'can not override builtin %r' % lhs
+            if lhs.startswith('Oink.'):
+                raise CompileError(node, 'can not override builtin %r' % lhs)
             if '.' not in lhs and lhs not in self.scope:
                 prefix = 'var '
                 self.scope.add_symbol(lhs)
@@ -198,8 +214,8 @@ class Compiler(ast.NodeVisitor):
 
     def visit_AugAssign(self, node):
         lhs = self.visit(node.target)
-        assert not lhs.startswith('Oink.'), \
-                'can not override builtin %r' % lhs
+        if lhs.startswith('Oink.'):
+            raise CompileError(node, 'can not override builtin %r' % lhs)
         if '.' not in lhs and lhs not in self.scope:
             prefix = 'var '
             self.scope.add_symbol(lhs)
@@ -258,7 +274,9 @@ class Compiler(ast.NodeVisitor):
             """
 
         with self.scoped(node):
-            assert len(node.bases) <= 1
+            if len(node.bases) > 1:
+                raise NotImplemented(node,
+                                     'multi-inheritance is not supported')
 
             name = node.name
 
@@ -275,8 +293,12 @@ class Compiler(ast.NodeVisitor):
         return 'console.log(%s)' % (text or '""')
 
     def visit_ListComp(self, node):
-        assert len(node.generators) == 1
-        assert len(node.generators[0].ifs) <= 1
+        if len(node.generators) != 1:
+            raise NotImplemented(node,
+                                 'only single-level generators are supported')
+        if len(node.generators[0].ifs) > 1:
+            raise NotImplemented(node,
+                                 'only single-level conditions are supported')
         target = self.visit(node.generators[0].target)
         iter = self.visit(node.generators[0].iter)
         expr = self.visit(node.elt)
@@ -305,8 +327,10 @@ class Compiler(ast.NodeVisitor):
 
     def visit_Call(self, node):
         if node.args and node.starargs:
-            raise NotImplemented('simultaneous use of *args and normal args '
-                                 'not supported')
+            raise NotImplemented(node, 'simultaneous use of *args and normal '
+                                 'args not supported')
+        if node.kwargs:
+            raise NotImplemented(node, 'keywords args are not supported')
         name = self.visit(node.func)
         if name == 'super':
             return 'self._super'
@@ -328,7 +352,7 @@ class Compiler(ast.NodeVisitor):
         return self.visit(node.value)
 
     def visit_Slice(self, node):
-        raise NotImplemented('Slicing is not implemented')
+        raise NotImplemented(node, 'Slicing is not implemented')
 
     def visit_Name(self, node):
         return self.BUILTINS.get(node.id, node.id)
@@ -378,6 +402,10 @@ class Compiler(ast.NodeVisitor):
         return self.scopes[-2] if len(self.scopes) > 1 else None
 
     # hardcoded these Nodes to return string argument when visited.
+    def strmap(show):
+        """Hardcode a particular ast Node to string representation 'show'."""
+        return lambda self, node=None: show
+
     visit_Add = strmap('+')
     visit_Break = strmap('break')
     visit_Continue = strmap('continue')
@@ -433,11 +461,10 @@ if __name__ == '__main__':
     filename = args[0]
     source = open(filename).read()
 
-    # Import runtime
-    js = ''
-    for filename in runtime:
-        js += open(filename).read() + '\n\n'
     compiler = Compiler()
-    script = compiler.compile(source, filename)
+    try:
+        script = compiler.compile(source, filename)
+    except Error, e:
+        print >> sys.stderr, 'error: %s:%s' % (filename, e)
+        sys.exit(1)
     print script
-    js += script

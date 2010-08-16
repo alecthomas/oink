@@ -1,7 +1,7 @@
 // Originally from http://ejohn.org/blog/simple-javascript-inheritance/
 // Inspired by base2 and Prototype
 (function(){
-  var initializing = false, fnTest = /xyz/.test(function(){xyz;}) ? /\b_super\b/ : /.*/;
+  var initializing = false, fnTest = /xyz/.test(function(){xyz;}) ? (/\b_super\b/) : (/.*/);
   //
   // Top-level namespace
   this.Oink = {};
@@ -84,50 +84,55 @@
     } else {
       return subject;
     }
-  }
+  };
+
+  Oink.repr = function (subject) {
+    return '' + subject;
+  };
 
   Oink.each = function (subject, callback) {
+    var i;
     if (subject.length) {
-      for (var i = 0; i < subject.length; ++i) {
+      for (i = 0; i < subject.length; ++i) {
         callback(subject[i]);
       }
     } else {
-      for (var i in subject) {
+      for (i in subject) {
         callback(i, subject[i]);
       }
     }
-  }
+  };
 
   Oink.range = function (start, end, stride) {
-    var result = [];
+    var i, result = [];
     stride = stride || 1;
     if (stride > 0) {
       if (end === undefined) {
-        for (var i = 0; i < start; i += stride) {
+        for (i = 0; i < start; i += stride) {
           result.push(i);
         }
       } else {
-        for (var i = start; i < end; i += stride) {
+        for (i = start; i < end; i += stride) {
           result.push(i);
         }
       }
     } else {
-      for (var i = start; i > end; i += stride) {
+      for (i = start; i > end; i += stride) {
         result.push(i);
       }
     }
     return result;
-  }
+  };
 
   Oink.listComprehension = function(subject, value, test) {
     var result = [];
     Oink.each(subject, function () {
       if (test === undefined || test.apply(test, arguments)) {
-        result.push(value.apply(value, arguments))
+        result.push(value.apply(value, arguments));
       }
     });
     return result;
-  }
+  };
 
   Oink.sum = function (subject) {
     var sum = 0;
@@ -135,7 +140,7 @@
       sum += element;
     });
     return sum;
-  }
+  };
 
   Oink.in_ = function (subject, element) {
     if (subject.length) {
@@ -147,5 +152,5 @@
       return false;
     }
     return element in subject;
-  }
+  };
 })();
