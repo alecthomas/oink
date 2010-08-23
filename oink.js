@@ -1,3 +1,8 @@
+// The Oink runtime.
+//
+// Contains the base of all classes, builtin functions, helper functions, etc.
+//
+
 // Originally from http://ejohn.org/blog/simple-javascript-inheritance/
 // Inspired by base2 and Prototype
 (function(){
@@ -44,10 +49,11 @@
     }
     
     // The dummy class constructor
-    function Class() {
+    function Class(args) {
       // All construction is actually done in the __init__ method
-      if (!initializing && this.__init__)
-        this.__init__.apply(this, arguments);
+      if (!initializing && this.__init__) {
+        this.__init__.apply(this, args);
+      }
     }
 
     // Populate our constructed prototype object
@@ -58,8 +64,12 @@
 
     // And make this class extendable
     Class.extend = arguments.callee;
+
+    function constructor() {
+      return new Class(arguments);
+    }
     
-    return Class;
+    return constructor;
   };
 
   Oink.str = function (subject) {

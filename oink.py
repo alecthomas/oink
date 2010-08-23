@@ -450,11 +450,10 @@ if __name__ == '__main__':
                       help='path to runtime [%default]')
     parser.add_option('--runtime', default='oink.js',
                       help='files to include in runtime [%default]')
+    parser.add_option('--run', action='store_true',
+                      help='attempt to run the compiled script')
 
     options, args = parser.parse_args()
-
-    runtime = [os.path.join(options.include, p)
-               for p in options.runtime.split(',')]
 
     if not args:
         parser.error('python source file required')
@@ -467,4 +466,11 @@ if __name__ == '__main__':
     except Error, e:
         print >> sys.stderr, 'error: %s:%s' % (filename, e)
         sys.exit(1)
-    print script
+
+    if options.run:
+        runtime = [os.path.join(options.include, p)
+                for p in options.runtime.split(',')]
+        runtime = '\n'.join(open(f).read() for f in runtime)
+        run_script(runtime + '\n' + script)
+    else:
+        print script
